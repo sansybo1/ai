@@ -1,0 +1,459 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>SlenderSim: building slenderness and disaster lab</title>
+<style>
+:root{--bg:#e9edf3;--pn:rgba(250,252,255,.88);--tx:#122033;--mu:#586a80;--ac:#0b73d6;--ok:#0f9d58;--wn:#c77c00;--bd:#d33a3a;--ln:rgba(18,32,51,.16);box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#060a11;--pn:rgba(10,16,26,.84);--tx:#e4ecf6;--mu:#8798ad;--ac:#46b0ff;--ok:#34d399;--wn:#ffb738;--bd:#ff6464;--ln:rgba(255,255,255,.13)}}
+:root[data-theme="dark"]{--bg:#060a11;--pn:rgba(10,16,26,.84);--tx:#e4ecf6;--mu:#8798ad;--ac:#46b0ff;--ok:#34d399;--wn:#ffb738;--bd:#ff6464;--ln:rgba(255,255,255,.13)}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--tx);font:12px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;overflow:hidden}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+#cv{position:fixed;inset:0;width:100%;height:100%;touch-action:none;cursor:grab;background:#0a1018}
+.card{position:fixed;background:var(--pn);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);border:1px solid var(--ln);border-radius:10px;padding:12px 14px;overflow:auto}
+#pn{left:12px;top:calc(12px + env(safe-area-inset-top,0px));bottom:calc(12px + env(safe-area-inset-bottom,0px));width:300px}
+#hud{right:12px;top:calc(12px + env(safe-area-inset-top,0px));width:292px;max-height:calc(100% - 24px - env(safe-area-inset-top,0px))}
+h1{font:700 16px/1.2 ui-monospace,Menlo,monospace;margin:0 0 2px}
+h2{font-size:11px;color:var(--mu);margin:14px 0 6px;font-weight:600}
+p{margin:6px 0 0}small{color:var(--mu)}
+label{display:flex;justify-content:space-between;align-items:center;gap:6px;margin-top:6px}
+input[type=range]{width:100%;accent-color:var(--ac);margin:2px 0}
+button,select{font:inherit;color:var(--tx);background:transparent;border:1px solid var(--ln);border-radius:6px;padding:6px 8px;cursor:pointer}
+select{width:100%}button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid var(--ac);outline-offset:1px}
+.seg{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.seg .on{border-color:var(--ac);background:color-mix(in srgb,var(--ac) 20%,transparent)}
+.row{display:flex;gap:8px;margin-top:14px}.row button{flex:1}
+.pri{background:var(--ac);color:#fff;border-color:transparent;font-weight:700}
+.dz{display:flex;justify-content:space-between;gap:6px;margin-top:8px}.dz em{color:var(--mu);font-style:normal;text-align:right}
+.vd{font-size:18px;font-weight:800}
+.kv{display:flex;justify-content:space-between;gap:8px;padding:3px 0;border-bottom:1px dashed var(--ln)}.kv b{text-align:right}
+.bar{height:6px;border-radius:3px;background:var(--ln);overflow:hidden;margin:3px 0 6px}.bar i{display:block;height:100%}
+#tag{position:fixed;left:50%;bottom:10px;transform:translateX(-50%);color:#9fb4cc;font-size:11px;pointer-events:none;white-space:nowrap}
+@media(max-width:820px){#pn{top:auto;left:8px;right:8px;width:auto;height:42vh;bottom:calc(8px + env(safe-area-inset-bottom,0px))}#hud{left:8px;right:8px;width:auto;top:calc(8px + env(safe-area-inset-top,0px));max-height:34vh}#tag{display:none}}
+</style></head><body>
+<canvas id="cv"></canvas>
+<div class="card" id="pn">
+<h1>SlenderSim</h1><small>Pick a building, hit it with a disaster, see if it stands.</small>
+<h2>Geometry</h2><div id="g"></div>
+<h2>Material</h2><div class="seg" id="mat"></div>
+<h2>Structural system</h2><select id="sys" aria-label="Structural system"></select>
+<h2>Disasters and strength</h2><div id="dz"></div>
+<div class="row"><button class="pri" id="run">Run simulation</button><button id="rs">Reset</button></div>
+</div>
+<div class="card" id="hud" aria-live="polite"></div>
+<div id="tag">Ray-marched in WebGL: primary, shadow and reflection rays per pixel. Drag to orbit, scroll to zoom.</div>
+<script>
+const $=s=>document.querySelector(s),sm=(a,b,x)=>{x=Math.min(1,Math.max(0,(x-a)/(b-a)));return x*x*(3-2*x)};
+const MAT=[
+{n:'Timber',E:7e9,Ep:11e9,rho:140,sig:1.6,z:.03,c:2200,al:5e-6,ft:15,d:.6,w:1,col:[.6,.4,.22],rf:.04},
+{n:'Concrete',E:30e9,Ep:30e9,rho:380,sig:6,z:.02,c:2800,al:10e-6,ft:3,d:.9,w:.35,col:[.6,.6,.58],rf:.08},
+{n:'Steel',E:24e9,Ep:200e9,rho:220,sig:8,z:.01,c:3300,al:12e-6,ft:250,d:1.15,w:.5,col:[.42,.5,.62],rf:.35},
+{n:'Composite',E:34e9,Ep:35e9,rho:300,sig:9,z:.015,c:3600,al:11e-6,ft:3.5,d:1.1,w:.4,col:[.35,.58,.58],rf:.2}];
+const SYS=[
+{n:'Moment frame',chi:.018,psi:.16,R:6,cm:1,rf:.3},
+{n:'Braced frame',chi:.04,psi:.24,R:5,cm:1.08,rf:.33},
+{n:'Shear-wall core',chi:.035,psi:.22,R:4.5,cm:1.05,rf:.34},
+{n:'Framed tube',chi:.06,psi:.36,R:5,cm:1.15,rf:.38},
+{n:'Outrigger + core',chi:.075,psi:.32,R:5.5,cm:1.25,rf:.36}];
+const EF=w=>w<38?0:w<49?1:w<60?2:w<74?3:w<89?4:5;
+const DZ={
+tor:{n:'Tornado',t:v=>{const w=25+85*v;return'EF'+EF(w)+', '+(w|0)+' m/s'}},
+eq:{n:'Earthquake',t:v=>'M'+(4.5+4.5*v).toFixed(1)+', '+(.05+1.15*v).toFixed(2)+' g'},
+rain:{n:'Heavy rain + flood',t:v=>((20+480*v)|0)+' mm/h, '+(.5+6*v).toFixed(1)+' m flood'},
+ecl:{n:'Solar eclipse',t:v=>(((.1+.9*v)*100)|0)+'% cover, -'+(14*(.1+.9*v)).toFixed(0)+' °C'}};
+const S={H:220,B:40,m:1,s:3,ph:0,run:0,dz:{tor:{on:1,v:.5},eq:{on:0,v:.5},rain:{on:0,v:.5},ecl:{on:0,v:.7}}};
+let res,mx,sc=.03;
+function an(H,B,mi,si,d){
+ const M=MAT[mi],Y=SYS[si],I=B**4/12,EI=M.E*Y.chi*I,mb=M.rho*B*B,W=mb*H*9.81,
+ T=1.787*H*H*Math.sqrt(mb/EI),Pr=W/(7.837*EI/(H*H)),am=1/Math.max(.03,1-Pr),
+ Mc=M.sig*1e6*Y.psi*B**3/6,Gf=Math.min(2.2,1+.22*Math.sqrt(T*.02/M.z));
+ const wind=(v,k)=>{const w=.78*v*v*B*k;return Math.max(w*H*H*.625*Gf*am/Mc,w*H**4/(8*EI)*Gf*am/H/.02)};
+ const r=[];
+ if(d.tor.on)r.push(['Tornado winds',wind(25+85*d.tor.v,1.25)]);
+ if(d.eq.on){const a=.05+1.15*d.eq.v,Sa=2.5*a*(T<.6?1:.6/T)*(T>4?4/T:1),V=Sa*W*.8,Sd=Sa*9.81*T*T/39.48*1.3/H/.02;
+  r.push(['Earthquake',Math.max(V*.77*H/(Y.R*M.d)*am/Mc,Sd)])}
+ if(d.rain.on){const s=d.rain.v,dp=.5+6*s,fl=3270*dp**3*B,sc=1-.35*s*M.w;r.push(['Rain, wind + flood',(wind(12+28*s,1)+fl*am/Mc)/sc])}
+ if(d.ecl.on){const dT=14*(.1+.9*d.ecl.v);r.push(['Eclipse (thermal)',Math.max(M.Ep*M.al*dT*.35/(M.ft*1e6),M.al*dT*.25*H/(2*B)/.01)])}
+ const gov=Math.hypot(0,...r.map(x=>x[1])),n=H/3.8;
+ return{T,Pr,r,gov,n,cost:B*B*n*M.c*Y.cm*(1+.8*(H/300)**1.5),st:Pr>=1||gov>1.5?2:gov>1?1:0,lam:2*H/(Y.rf*B)}}
+function maxH(B,mi,si,d){let lo=5,hi=1600;if(!an(hi,B,mi,si,d).st)return hi;if(an(lo,B,mi,si,d).st)return 0;
+ for(let i=0;i<30;i++){const m=(lo+hi)/2;an(m,B,mi,si,d).st?hi=m:lo=m}return lo}
+const fmt=c=>c>=1e9?'$'+(c/1e9).toFixed(2)+'B':'$'+(c/1e6).toFixed(0)+'M';
+$('#g').innerHTML='<label>Height<b id=Hv></b></label><input id=H type=range min=20 max=800 value=220 aria-label="Height"><label>Width (square plan)<b id=Bv></b></label><input id=B type=range min=8 max=120 value=40 aria-label="Width">';
+$('#mat').innerHTML=MAT.map((m,i)=>`<button data-m=${i}>${m.n}</button>`).join('');
+$('#sys').innerHTML=SYS.map((s,i)=>`<option value=${i}>${s.n}</option>`).join('');$('#sys').value=S.s;
+$('#dz').innerHTML=Object.keys(DZ).map(k=>`<div class=dz><label style="margin:0"><input type=checkbox data-k=${k} ${S.dz[k].on?'checked':''}>${DZ[k].n}</label><em id=${k}_t></em></div><input type=range data-k=${k} min=0 max=100 value=${S.dz[k].v*100} aria-label="${DZ[k].n} strength">`).join('');
+function upd(reset){
+ if(reset){S.ph=0;S.run=0;$('#run').textContent='Run simulation'}
+ S.H=+$('#H').value;S.B=+$('#B').value;S.s=+$('#sys').value;const H=S.H,B=S.B;
+ res=an(H,B,S.m,S.s,S.dz);mx=maxH(B,S.m,S.s,S.dz);sc=6/Math.max(H,B*1.6,60);
+ $('#Hv').textContent=H+' m';$('#Bv').textContent=B+' m';
+ document.querySelectorAll('#mat button').forEach((b,i)=>b.className=i==S.m?'on':'');
+ for(const k in DZ)$('#'+k+'_t').textContent=DZ[k].t(S.dz[k].v);
+ const r=res,ar=H/B,cls=ar<3?'stocky':ar<5?'normal':ar<7?'slender':ar<10?'very slender':'extreme',
+ vt=['Survives','Heavily damaged','Collapses'][r.st],vc=['--ok','--wn','--bd'][r.st],
+ bars=r.r.length?r.r.map(x=>`<div class=kv><span>${x[0]}</span><b>${x[1].toFixed(2)}</b></div><div class=bar><i style="width:${Math.min(100,x[1]*66)}%;background:var(${x[1]<1?'--ok':x[1]<1.5?'--wn':'--bd'})"></i></div>`).join(''):'<small>No disaster applied. Switch one on at left.</small>';
+ $('#hud').innerHTML=`<div class=vd style="color:var(${vc})">${vt}</div><small>Governing demand/capacity ${r.gov.toFixed(2)}${r.Pr>=1?'. Self-weight buckling.':''}</small>
+<h2>Slenderness</h2>
+<div class=kv><span>Aspect ratio H/B</span><b>${ar.toFixed(1)} (${cls})</b></div>
+<div class=kv><span>Effective kL/r, k = 2</span><b>${r.lam.toFixed(0)}</b></div>
+<div class=kv><span>Fundamental period</span><b>${r.T.toFixed(1)} s</b></div>
+<div class=kv><span>Buckling P/Pcr</span><b>${r.Pr.toFixed(2)}</b></div>
+<div class=kv><span>Max safe height at this width</span><b>${mx>=1600?'over 1600 m':mx<6?'none':Math.round(mx)+' m (H/B '+(mx/B).toFixed(1)+')'}</b></div>
+<h2>Demand / capacity (1.0 = limit)</h2>${bars}
+<h2>Rough cost</h2>
+<div class=kv><span>Floors</span><b>${r.n|0}</b></div><div class=kv><span>Total</span><b>${fmt(r.cost)}</b></div>
+<div class=kv><span>Per m² of floor</span><b>$${Math.round(r.cost/(B*B*r.n)).toLocaleString()}</b></div>
+<p><small>Conceptual cantilever model for early sizing. Not for design: verify with a licensed structural engineer.</small></p>`}
+$('#pn').addEventListener('input',e=>{const t=e.target,k=t.dataset.k;if(k){if(t.type=='checkbox')S.dz[k].on=+t.checked;else S.dz[k].v=t.value/100}upd(1)});
+$('#mat').onclick=e=>{const b=e.target.closest('button');if(b){S.m=+b.dataset.m;upd(1)}};
+$('#run').onclick=()=>{S.ph=.0001;S.run=1;$('#run').textContent='Simulating...'};
+$('#rs').onclick=()=>upd(1);
+upd();
+const FS=`#ifdef GL_FRAGMENT_PRECISION_HIGH
+precision highp float;
+#else
+precision mediump float;
+#endif
+uniform vec2 R;uniform float T;uniform vec4 G,W,C,P,K,Q,Z,F;uniform vec3 M;
+const vec3 SD=vec3(.555,.499,-.666);
+vec3 SV;float SI;
+float hash(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}
+float box(vec3 p,vec3 b){vec3 q=abs(p)-b;return length(max(q,0.))+min(max(q.x,max(q.y,q.z)),0.);}
+vec3 obj(vec3 p){
+ p.xz-=K.xy;
+ vec2 q=p.xy-vec2(G.y*.5,0.);
+ float c=cos(G.w),s=sin(G.w);
+ p.xy=vec2(c*q.x-s*q.y,s*q.x+c*q.y)+vec2(G.y*.5,0.);
+ p.y/=1.-Q.y;
+ p.x+=Q.y*G.y*.2*sin(p.y/G.x*14.+2.*sin(p.y/G.x*5.));
+ p.z+=Q.y*P.w*.15*sin(p.y/G.x*11.);
+ p.x-=G.z*pow(clamp(p.y/G.x,0.,1.),2.)+Q.w*smoothstep(Q.z-.05*G.x,Q.z+.05*G.x,p.y);
+ return p;}
+float bsd(vec3 p){vec3 o=obj(p);o.y-=G.x*.5;float k=1.-Q.x*clamp((o.y+G.x*.5)/G.x,0.,1.);return box(o,vec3(G.y*.5*k,G.x*.5,P.w*.5*k))*.85*(1.-Q.y)-.004;}
+float BL(){return 4.8*max(G.y,.9);}
+float lawn(vec2 g){float b=BL();vec2 l=abs(g/b-floor(g/b+.5));return 1.-step(.38,max(l.x,l.y));}
+float tree(vec3 p){if(p.y>.7)return p.y-.6;vec2 c=floor(p.xz/.9)+.5;float h=hash(c);vec2 w=c*.9;
+ if(h>.3||lawn(w)<.5||(abs(w.x)<G.y*.75+.6&&abs(w.y)<P.w*.75+.6))return .22;
+ return min(length(p-vec3(w.x,.32,w.y))-.2,max(length(p.xz-w)-.025,p.y-.18));}
+float map(vec3 p){float d=bsd(p),s=max(G.y,.9);
+ d=min(d,box(p-vec3(-s*1.5,G.x*.14,-s*1.1),vec3(s*.4,G.x*.14,s*.4)));
+ d=min(d,box(p-vec3(s*.5,G.x*.2,-s*1.9),vec3(s*.35,G.x*.2,s*.35)));
+ d=min(d,box(p-vec3(-s*.4,G.x*.12,s*1.5),vec3(s*.3,G.x*.12,s*.3)));
+ d=min(d,box(p-vec3(-s*4.4,G.x*.32,-s*2.6),vec3(s*1.1,G.x*.32,s*1.1)));
+ d=min(d,box(p-vec3(s*4.6,G.x*.24,s*2.9),vec3(s*.95,G.x*.24,s*.95)));
+ d=min(d,box(p-vec3(-s*3.4,G.x*.27,s*3.8),vec3(s*.9,G.x*.27,s*.9)));
+ d=min(d,tree(p));
+ d=min(d,box(p-vec3(-s*1.7,G.x*.1,s*.9),vec3(s*.45,G.x*.1,s*.5)));
+ d=min(d,box(p-vec3(s*1.8,G.x*.15,-s*.5),vec3(s*.4,G.x*.15,s*.6)));
+ d=min(d,box(p-vec3(s*.2,G.x*.07,s*2.),vec3(s*.7,G.x*.07,s*.4)));
+ return d;}
+float march(vec3 ro,vec3 rd,float tm,int n){float t=.01;for(int i=0;i<90;i++){if(i>=n)break;float d=map(ro+rd*t);if(d<.0006*t+.0004||t>tm)break;t+=d*.75;}return min(t,tm);}
+float shadow(vec3 ro,vec3 rd){float r=1.,t=.02;for(int i=0;i<40;i++){float d=map(ro+rd*t);r=min(r,10.*d/t);t+=clamp(d,.03,.5);if(r<.002||t>14.)break;}return clamp(r,0.,1.);}
+vec3 nrm(vec3 p){const vec2 k=vec2(1.,-1.);float h=.0012*(1.+G.x*.3);
+ return normalize(k.xyy*map(p+k.xyy*h)+k.yyx*map(p+k.yyx*h)+k.yxy*map(p+k.yxy*h)+k.xxx*map(p+k.xxx*h));}
+vec3 city(vec3 c,vec3 rd){
+ float a=atan(rd.x,rd.z),nl=smoothstep(.1,.5,max(W.z,max(W.x,Z.x)*.5));
+ for(int k=0;k<2;k++){float fk=float(k);float N=64.-fk*28.;
+  float i=mod(floor(a*N/6.2832+N*.5),N);float h=.02+(.17-.09*fk)*pow(hash(vec2(i,fk+1.)),2.);
+  if(rd.y<h&&rd.y>-.25){vec2 wp=vec2(a*N*4./6.2832,rd.y*(150.-60.*fk));
+   float win=step(.55,hash(floor(wp)+fk))*step(.2,fract(wp.x))*step(.25,fract(wp.y));
+   vec3 b=mix(vec3(.4,.46,.56),vec3(.17,.21,.29),fk)*(.35+.65*(1.-W.z))*(1.-.4*W.x);
+   c=b+vec3(1.,.8,.5)*win*nl*.9;}}
+ return c;}
+vec3 sky(vec3 rd){
+ float e=W.z,rn=W.x,tn=W.y;
+ vec3 hor=mix(vec3(.78,.86,.95),vec3(.5,.25,.12),e);
+ vec3 top=mix(vec3(.16,.36,.78),vec3(.01,.02,.07),e);
+ vec3 c=mix(hor,top,pow(clamp(rd.y,0.,1.),.45));
+ c=mix(c,vec3(.2,.23,.27)*(.5+.5*rd.y),rn*.85);
+ c=mix(c,vec3(.17,.22,.19)*(.6+.4*rd.y),tn*.7);
+ vec3 e1=normalize(cross(SV,vec3(0.,1.,0.))),e2=cross(e1,SV);
+ float fw=dot(rd,SV);
+ vec2 q=vec2(dot(rd,e1),dot(rd,e2));
+ float r=fw>0.?length(q):9.;
+ float sn=1.-smoothstep(.046,.052,r);
+ float mn=1.-smoothstep(.046,.052,length(q-vec2((1.-e)*.11,0.)));
+ float k=1.-rn*.8;
+ c+=vec3(1.,.92,.75)*sn*12.*k;
+ c+=vec3(.7,.8,1.)*(.0008/(r*r+.0006))*smoothstep(.6,1.,e)*k;
+ c+=vec3(1.,.8,.55)*pow(max(fw,0.),90.)*(1.-e)*.5*k;
+ c*=1.-.97*mn*max(sn,smoothstep(.8,1.,e));c=city(c,rd);
+ return c;}
+float crack(vec2 p){vec2 i=floor(p),f=fract(p);float a=8.,b=8.;
+ for(int y=-1;y<=1;y++)for(int x=-1;x<=1;x++){vec2 g=vec2(float(x),float(y));vec2 o=vec2(hash(i+g),hash(i+g+7.));float d=length(g+o-f);if(d<a){b=a;a=d;}else if(d<b)b=d;}
+ return b-a;}
+vec2 fac(vec2 uv){
+ float nb=P.z,nf=C.w,sy=P.y;
+ float gx=fract(uv.x*nb),gy=fract(uv.y*nf);
+ float ww=min(.95,((sy>2.5&&sy<3.5)?.3:.68)*Z.z/.6);
+ float gl=step(abs(gx-.5),ww*.5)*step(abs(gy-.5),min(.47,.3*Z.z/.6));
+ float mem=1.-gl;
+ if(sy>.5&&sy<1.5){vec2 q=fract(vec2(uv.x*nb*.5,uv.y*nf*.25));
+  mem=max(mem,max(1.-smoothstep(0.,.06,abs(q.x-q.y)),1.-smoothstep(0.,.06,abs(q.x+q.y-1.))));gl*=1.-mem;}
+ if(sy>1.5&&sy<2.5){float w=step(.27,abs(uv.x-.5));gl*=1.-w;mem=1.-gl;}
+ if(sy>3.5){float bd=min(step(abs(uv.y-.33),.012)+step(abs(uv.y-.66),.012),1.);gl*=1.-bd;mem=max(mem,bd);}
+ return vec2(gl,mem);}
+vec3 hitc(vec3 p,vec3 rd){vec3 n=nrm(p);return vec3(.5,.52,.56)*(.2+.8*max(dot(n,SD),0.)*SI);}
+vec3 shadeB(vec3 p,vec3 n,vec3 rd){
+ float sh=shadow(p+n*.004,SD);
+ vec3 amb=mix(vec3(.22,.24,.28),vec3(.5,.65,.9),n.y*.5+.5)*(.3+.7*(1.-W.z))*(1.-.5*W.x);
+ float dif=max(dot(n,SD),0.)*sh*SI;
+ if(bsd(p)>.02){if(tree(p)<.02)return vec3(.05,.2,.06)*(.4+hash(floor(p.xz*30.))*.3)*(dif*1.4+amb);
+ float wg=step(.35,fract(p.y*16.))*step(.3,fract((p.x+p.z)*11.));
+ float lt=step(.6,hash(floor(vec2(p.y*16.,(p.x+p.z)*11.))))*wg*smoothstep(.1,.5,max(W.z,W.x*.5));
+ return mix(vec3(.46,.47,.5),vec3(.1,.16,.24),wg*.85)*(dif*1.5+amb)+vec3(1.,.8,.5)*lt*.8;}
+ vec3 o=obj(p);
+ if(o.y>G.x-.015)return vec3(.2)*(dif*1.4+amb);
+ bool sx=abs(o.x)/G.y>abs(o.z)/P.w;
+ float kk=1.-Q.x*clamp(o.y/G.x,0.,1.);float u=(sx?o.z/(P.w*kk):o.x/(G.y*kk))+.5,v=o.y/G.x;
+ vec2 f=fac(vec2(u,v));
+ vec2 cell=floor(vec2(u*P.z,v*C.w))+(sx?3.:7.);
+ float zq=(v-Z.w)*3.2,zn=exp(-zq*zq),dl=clamp(W.w*(.3+1.4*zn),0.,1.);
+ float br=step(hash(cell),max(max(dl*.8,Z.y),F.x*.45));
+ float gl=f.x*(1.-br);
+ vec3 mem=M*(.78+.22*hash(floor(vec2(u,v)*37.)));
+ vec3 alb=mix(mem,vec3(.04,.07,.1),f.x);
+ float cr=(1.-smoothstep(0.,.04+.05*dl,crack(vec2(u*P.z*1.2,v*C.w*.3))))*step(hash(floor(vec2(u*P.z*.6,v*C.w*.15))+5.),dl*1.2)*step(.12,dl);
+ alb=mix(alb,vec3(.02)+f.x*vec3(.65,.75,.85),cr*.9);
+ vec3 lit=alb*(dif*vec3(1.,.95,.85)*1.7+amb);
+ float fr=(pow(1.-max(dot(n,-rd),0.),4.)*.85+.12)*(.35+P.x*1.6)*gl;
+ vec3 rr=reflect(rd,n);vec3 rc=sky(rr);
+ float rt=march(p+n*.01,rr,25.,40);
+ if(rt<24.9)rc=hitc(p+n*.01+rr*rt,rr);
+ vec3 col=mix(lit,rc,min(fr,.9))+vec3(1.,.9,.7)*pow(max(dot(rr,SD),0.),60.)*SI*gl*.8;
+ col+=vec3(1.,.78,.45)*step(.55,hash(cell+11.))*gl*smoothstep(.1,.5,max(W.z,W.x*.5))*1.1;
+ vec3 fl=vec3(1.,.4,.08)*(.7+.5*sin(T*11.+hash(cell+5.)*40.))*step(hash(cell+23.),F.x)*step(v,.35+.6*F.x);
+ return mix(col,vec3(.01)+fl*1.6,br*f.x);}
+vec3 shadeG(vec3 p,vec3 rd){
+ vec2 g=p.xz;float b4=BL();vec2 l=abs(g/b4-floor(g/b4+.5));float mm=max(l.x,l.y);
+ float road=step(.42,mm);float sw=step(.38,mm)*(1.-road);float pl=1.-step(1.25,max(abs(g.x)/G.y,abs(g.y)/P.w));
+ float gr=(1.-step(.38,mm))*(1.-pl);float gn=hash(floor(g*34.))*.5+hash(floor(g*11.))*.5;
+ float dash=road*step(abs(mm-.46),.006)*step(.5,fract((l.x>l.y?g.y:g.x)/b4*16.));
+ 
+ vec3 alb=mix(vec3(.5,.5,.48),vec3(.09,.095,.1),road);alb=mix(alb,vec3(.62,.62,.58),sw);alb=mix(alb,mix(vec3(.06,.26,.05),vec3(.2,.46,.1),gn),gr);alb+=vec3(.75,.65,.15)*dash*.7;
+ float sh=shadow(p+vec3(0.,.004,0.),SD);
+ vec3 amb=vec3(.28,.32,.4)*(.3+.7*(1.-W.z))*(1.-.5*W.x);
+ vec3 col=alb*(SD.y*sh*SI*1.6+amb);
+ vec3 rr=vec3(rd.x,-rd.y,rd.z);vec3 rc=sky(rr);
+ float rt=march(p+vec3(0.,.01,0.),rr,25.,36);
+ if(rt<24.9)rc=hitc(p+vec3(0.,.01,0.)+rr*rt,rr);
+ float fr=(.05+.95*pow(1.-abs(rd.y),4.))*(.18+.8*W.x)*mix(1.,.12,gr);
+ return mix(col,rc,fr);}
+float rainf(vec2 uv){float s=0.;for(int k=0;k<3;k++){float fk=float(k);
+ vec2 g=vec2(uv.x+uv.y*.35,uv.y)*vec2(50.+fk*35.,1.);float id=floor(g.x),h=hash(vec2(id,fk));
+ float y=fract(uv.y*.8+T*(1.4+fk*.5+h)+h*9.);
+ s+=smoothstep(0.,.03,y)*(1.-smoothstep(.03,.3,y))*step(.55,hash(vec2(id,fk+5.)))*(1.-smoothstep(.04,.08,abs(fract(g.x)-.5)))*.7;}
+ return s;}
+void main(){
+ vec2 uv=(gl_FragCoord.xy-.5*R)/R.y;
+ vec3 ta=vec3(K.x*.7,G.x*.4,K.y*.7);
+ vec3 ro=ta+C.z*vec3(sin(C.x)*cos(C.y),sin(C.y),cos(C.x)*cos(C.y));
+ vec3 f=normalize(ta-ro),r=normalize(cross(f,vec3(0.,1.,0.))),u=cross(r,f);
+ vec3 rd=normalize(f*1.5+r*uv.x+u*uv.y);
+ SV=normalize(f+r*.55+u*.33);
+ SI=(1.-.96*W.z*W.z)*(1.-.75*W.x)*(1.-.55*W.y);
+ float tg=rd.y<-.0001?-ro.y/rd.y:1e3;
+ float tm=min(tg,60.);
+ float t=march(ro,rd,tm,90);
+ vec3 col;float ts;
+ if(t<tm-.02){vec3 p=ro+rd*t;col=shadeB(p,nrm(p),rd);ts=t;}
+ else if(tg<60.){vec3 p=ro+rd*tg;col=shadeG(p,rd);col=mix(col,sky(vec3(rd.x,.02,rd.z)),1.-exp(-tg*.02));ts=tg;}
+ else{col=sky(rd);ts=50.;}
+ if(W.y>.01){
+  float TH=max(G.x*1.3,5.);vec3 c3=vec3(K.z,TH*.5,K.w);float rb=TH*.56;
+  vec3 oc=ro-c3;float b=dot(oc,rd),h=b*b-(dot(oc,oc)-rb*rb);
+  if(h>0.){h=sqrt(h);float t0=max(-b-h,0.),t1=min(-b+h,ts);
+   if(t1>t0){float st=(t1-t0)/26.,tr=1.;vec3 tc=vec3(0.);
+    for(int i=0;i<26;i++){vec3 q=ro+rd*(t0+(float(i)+.5)*st);float y=q.y/TH;
+     if(y>0.&&y<1.){vec2 c=q.xz-K.zw;float a=y*6.+T*4.;float ca=cos(a),sa=sin(a);c=vec2(ca*c.x-sa*c.y,sa*c.x+ca*c.y);
+      float rad=(.07+.95*pow(y,1.4))*TH/5.*(.6+.4*W.y);
+      float n=.5+.5*sin(c.x*6./(rad+.2)+T)*sin(c.y*6./(rad+.2)-T*1.3);
+      float dn=(1.-smoothstep(rad*.35,rad*(1.+.3*n),length(c)))*(.4+.6*n)*(1.-smoothstep(.85,1.,y));
+      float al=1.-exp(-dn*st*3.2);tc+=tr*al*vec3(.2,.21,.21)*(.5+.5*SI+.3*n);tr*=1.-al;}}
+    col=col*tr+tc;}}}
+ if(W.x>.01){col*=1.-W.x*.2;col+=vec3(.6,.7,.85)*rainf(uv)*W.x*.5;}
+ col+=vec3(.9,.95,1.)*pow(rainf(uv*vec2(.8,.7)+vec2(3.7,1.3)),2.)*Z.x*.8;col*=1.-.35*dot(uv,uv);
+ col=1.-exp(-col*1.25);col=pow(col,vec3(.4545));
+ gl_FragColor=vec4(col,1.);}`;
+const cv=$('#cv'),gl=cv.getContext('webgl')||cv.getContext('experimental-webgl'),U={};
+let az=.9,el=.2,zoom=1,drag=0,last=0;
+try{
+ const mk=(t,s)=>{const h=gl.createShader(t);gl.shaderSource(h,s);gl.compileShader(h);if(!gl.getShaderParameter(h,gl.COMPILE_STATUS))throw gl.getShaderInfoLog(h);return h},
+ pr=gl.createProgram();
+ gl.attachShader(pr,mk(gl.VERTEX_SHADER,'attribute vec2 a;void main(){gl_Position=vec4(a,0.,1.);}'));
+ gl.attachShader(pr,mk(gl.FRAGMENT_SHADER,FS));gl.linkProgram(pr);gl.useProgram(pr);
+ gl.bindBuffer(gl.ARRAY_BUFFER,gl.createBuffer());gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,3,-1,-1,3]),gl.STATIC_DRAW);
+ const a=gl.getAttribLocation(pr,'a');gl.enableVertexAttribArray(a);gl.vertexAttribPointer(a,2,gl.FLOAT,false,0,0);
+ 'R T G W C P K M Q Z F'.split(' ').forEach(n=>U[n]=gl.getUniformLocation(pr,n));
+}catch(err){document.body.insertAdjacentHTML('beforeend','<p style="position:fixed;left:330px;top:40%;color:#f88;max-width:40ch">3D view unavailable on this device: '+String(err).slice(0,160)+'. The engineering results still work.</p>');console.error(err)}
+function rs(){const k=Math.min(devicePixelRatio||1,1.5)*.75;cv.width=cv.clientWidth*k|0;cv.height=cv.clientHeight*k|0;gl&&gl.viewport(0,0,cv.width,cv.height)}
+addEventListener('resize',rs);rs();
+cv.onpointerdown=e=>{drag=1;cv.setPointerCapture(e.pointerId)};cv.onpointerup=()=>drag=0;
+cv.onpointermove=e=>{if(drag){az-=e.movementX*.006;el=Math.min(1.2,Math.max(.03,el+e.movementY*.004))}};
+cv.onwheel=e=>{e.preventDefault();zoom=Math.min(2.5,Math.max(.4,zoom*(1+e.deltaY*.001)))};
+function frame(ms){
+ requestAnimationFrame(frame);if(!U.R)return;
+ const t=ms/1e3,dt=Math.min(.05,t-last);last=t;
+ if(S.run){S.ph=Math.min(1,S.ph+dt/16);if(S.ph>=1){S.run=0;$('#run').textContent='Run again'}}
+ if(!drag)az+=dt*.03;
+ const ph=S.ph,d=S.dz,Rz=res,Mt=MAT[S.m],e=ph>0?sm(0,.22,ph)*(1-sm(.82,1,ph)):.5,
+ hs=S.H*sc,bs=S.B*sc,g=Rz.gov,act=Object.values(d).some(x=>x.on)?1:.15,Tv=Math.min(5,Math.max(1.5,Rz.T)),w=6.283*t/Tv;
+ let sway=(.02+.07*Math.min(g,1.5))*hs*e*act*(Math.sin(w)+.4*Math.sin(2.3*w+1)),tp=0;
+ if(Rz.st)sway+=Math.min(.25,(g-1)*.25)*hs*sm(.3,.6,ph);
+ if(Rz.st==2&&ph>0){sway*=1+2*sm(.3,.5,ph);tp=1.45*Math.pow(sm(.5,.85,ph),1.6);sway*=1-sm(.5,.6,ph)}
+ const q=d.eq.on?e*(.2+.8*d.eq.v):0,shx=.05*bs*q*(Math.sin(t*29)+.6*Math.sin(t*47+1)),shz=.05*bs*q*Math.cos(t*37),
+ tor=d.tor.on?e*(.35+.65*d.tor.v):0,tx=ph>0?-9+9.5*sm(0,.55,ph)+9*sm(.6,1,ph):-4.5+Math.sin(t*.5),tz=-.5+.3*Math.sin(t*.7),
+ dist=Math.max(hs*1.7,bs*2.6,4.5)*zoom;
+ gl.uniform2f(U.R,cv.width,cv.height);gl.uniform1f(U.T,t);
+ gl.uniform4f(U.G,hs,bs,sway,tp);
+ gl.uniform4f(U.W,d.rain.on?e*(.25+.75*d.rain.v):0,tor,d.ecl.on?e*(.1+.9*d.ecl.v):0,ph>0?Math.min(1,Math.max(0,(g-.5)/1.1))*sm(.2,.8,ph):0);
+ gl.uniform4f(U.C,az,el,dist,Math.min(120,Math.round(S.H/3.8)));
+ gl.uniform4f(U.P,Mt.rf,S.s,Math.min(14,Math.max(3,Math.round(S.B/7))),0);
+ gl.uniform4f(U.K,shx,shz,tx,tz);gl.uniform3f(U.M,...Mt.col);
+ gl.drawArrays(gl.TRIANGLES,0,3)}
+requestAnimationFrame(frame);
+</script>
+<style>.card{z-index:2}#fx{position:fixed;inset:0;width:100%;height:100%;pointer-events:none;z-index:1}#msg{position:fixed;z-index:3;left:50%;top:calc(14px + env(safe-area-inset-top,0px));transform:translate(-50%,-16px);width:min(470px,calc(100% - 16px));padding:12px 16px;border-radius:10px;border:2px solid var(--c,var(--ln));background:var(--pn);-webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px);opacity:0;pointer-events:none;transition:opacity .4s,transform .4s;line-height:1.5}#msg.on{opacity:1;transform:translate(-50%,0)}#msg b{display:block;font-size:15px;color:var(--c);margin-bottom:2px}@media(max-width:1100px){#msg{top:auto;bottom:calc(14px + env(safe-area-inset-bottom,0px))}}@media(max-width:820px){#msg{bottom:calc(42vh + 16px)}}</style>
+<script>
+MAT.push({n:'Masonry',E:12e9,Ep:15e9,rho:520,sig:1,z:.025,c:2000,al:6e-6,ft:1,d:.35,w:.5,col:[.62,.33,.25],rf:.03,fs:.25},{n:'UHPC',E:50e9,Ep:50e9,rho:420,sig:14,z:.018,c:5200,al:11e-6,ft:8,d:.8,w:.2,col:[.76,.77,.79],rf:.1,fs:.6},{n:'Bamboo',E:12e9,Ep:15e9,rho:110,sig:2.2,z:.035,c:1500,al:4e-6,ft:20,d:.7,w:1,col:[.72,.62,.3],rf:.03,fs:1},{n:'Carbon fibre',E:60e9,Ep:150e9,rho:160,sig:16,z:.008,c:9000,al:1e-6,ft:300,d:.5,w:.1,col:[.1,.1,.12],rf:.5,fs:1.2});
+[.85,.5,1,.7].forEach((f,i)=>MAT[i].fs=f);
+Object.assign(DZ,{hur:{n:'Hurricane',t:v=>'Cat '+(1+(v*4.99|0))+', '+(33+57*v|0)+' m/s'},hail:{n:'Hailstorm',t:v=>(15+120*v|0)+' mm stones'},fire:{n:'Building fire',t:v=>(300+800*v|0)+' °C'}});
+Object.assign(S.dz,{hur:{on:0,v:.5},hail:{on:0,v:.6},fire:{on:0,v:.6}});
+const FND=[['Spread footings',.85,1,1],['Raft slab',1,1.04,.7],['Piles',1.15,1.08,.4],['Rock caissons',1.3,1.15,.2]],
+DMP=[['None',0,0,1],['Tuned mass damper',.03,.015,1],['Viscous dampers',.04,.025,.85],['Base isolation',0,.04,.45]],
+GLS=[['Annealed',1,1],['Tempered',2.2,1.15],['Laminated',3.2,1.35]],
+USE=[['Office',14,.7],['Residential',38,.9],['Hotel',45,.85],['Mixed use',26,.8]],
+SL=[['H','Height',20,800,220,' m',1],['B','Width',8,120,40,' m',1],['D','Depth',8,120,40,' m',1],['FH','Storey height',3,5,3.8,' m',.1],['TP','Taper to top',0,60,0,'%',1],['GL','Glazing',10,95,60,'%',1],['SF','Design strength',.6,1.6,1,'x',.05]],
+SE=[['FN','Foundation',FND,1],['DP','Dampers',DMP,0],['GT','Glass type',GLS,0],['US','Building use',USE,0]];
+$('#g').innerHTML=SL.map(x=>`<label>${x[1]}<b id=${x[0]}v></b></label><input id=${x[0]} type=range min=${x[2]} max=${x[3]} step=${x[6]} value=${x[4]} aria-label='${x[1]}'>`).join('')+SE.map(x=>`<label>${x[1]}</label><select id=${x[0]} aria-label='${x[1]}'>${x[2].map((o,i)=>`<option value=${i}${i==x[3]?' selected':''}>${o[0]}</option>`).join('')}</select>`).join('');
+$('#mat').innerHTML=MAT.map((m,i)=>`<button data-m=${i}>${m.n}</button>`).join('');
+$('#dz').innerHTML=Object.keys(DZ).map(k=>`<div class=dz><label style='margin:0'><input type=checkbox data-k=${k} ${S.dz[k].on?'checked':''}>${DZ[k].n}</label><em id=${k}_t></em></div><input type=range data-k=${k} min=0 max=100 value=${S.dz[k].v*100} aria-label='${DZ[k].n} strength'>`).join('');
+document.body.insertAdjacentHTML('beforeend','<div id=msg></div>');
+const fmt2=c=>c>=1e9?'$'+(c/1e9).toFixed(2)+'B':c>=1e6?'$'+(c/1e6).toFixed(c<1e7?1:0)+'M':'$'+Math.round(c/1e3)+'K';
+function an(H,P){
+const M=MAT[P.m],Y=SYS[P.s],Fn=FND[P.fn],Dm=DMP[P.dp],Gt=GLS[P.gt],Us=USE[P.us],d=P.dz,b=Math.min(P.B,P.D),L=Math.max(P.B,P.D),kt=1-.4*P.tp,sf=P.sf,
+fT=d.fire.on?300+800*d.fire.v:20,ret=Math.max(.02,1-M.fs*sm(300,1000,fT)),
+EI=M.E*Y.chi*(.8+.2*sf)*(.35+.65*ret)*L*kt*(b*kt)**3/12,mb=M.rho*P.B*P.D*kt*kt,W=mb*H*9.81,
+T=1.787*H*H*Math.sqrt(mb/EI),Pr=W/(7.837*EI/(H*H)),am=1/Math.max(.03,1-Pr),
+Mc=M.sig*1e6*Y.psi*sf*Fn[1]*ret*L*b*b/6,z=M.z+Dm[1],Gf=Math.min(2.2,1+.22*Math.sqrt(T*.02/z)),sg=Math.sqrt(Gt[1]);
+const wind=(v,k)=>{const w=.78*v*v*L*(1-.3*P.tp)*k;return Math.max(w*H*H*.625*Gf*am/Mc,w*H**4/(8*EI)*Gf*am/H/.02)};
+const r=[];
+if(d.tor.on){const v=25+85*d.tor.v;r.push(['Tornado winds',wind(v,1.25),sm(35,75,v/sg)])}
+if(d.hur.on){const s=d.hur.v,v=33+57*s,dp=.5+5*s,fl=3270*dp**3*L,sk=1-.35*s*M.w*Fn[3];r.push(['Hurricane',(wind(v,1.1)*1.1+fl*am/Mc)/sk,sm(40,80,v/sg)])}
+if(d.eq.on){const a=.05+1.15*d.eq.v,Sa=2.5*a*(T<.6?1:.6/T)*(T>4?4/T:1)*Dm[3],V=Sa*W*.8,dr=Sa*9.81*T*T/39.48*1.3/H;r.push(['Earthquake',Math.max(V*.77*H/(Y.R*M.d)*am/Mc,dr/.02),sm(.004,.02,dr)/Math.pow(Gt[1],.3)])}
+if(d.rain.on){const s=d.rain.v,dp=.5+6*s,fl=3270*dp**3*L,sk=1-.35*s*M.w*Fn[3];r.push(['Rain, wind + flood',(wind(12+28*s,1)+fl*am/Mc)/sk,0])}
+if(d.hail.on)r.push(['Hail',.04+.08*d.hail.v,sm(18,70,(15+120*d.hail.v)/Gt[1])]);
+if(d.ecl.on){const dT=14*(.1+.9*d.ecl.v);r.push(['Eclipse (thermal)',Math.max(M.Ep*M.al*dT*.35/(M.ft*1e6),M.al*dT*.25*H/(2*b)/.01),0])}
+if(d.fire.on)r.push(['Fire',.45/ret,sm(350,700,fT)]);
+const gov=Math.hypot(0,...r.map(x=>x[1])),gb=1-r.reduce((a,x)=>a*(1-x[2]),1),n=H/P.fh,GFA=P.B*P.D*(1-.5*P.tp)*n,
+cost=GFA*M.c*Y.cm*(1+.8*(H/300)**1.5)*(.85+.15*sf)*Fn[2]*(1+Dm[2])*(1+(Gt[2]-1)*P.gl/100*.3),
+st=Pr>=1||gov>1.5?2:gov>1?1:0,dr=st==2?1:gov>1?.55+.4*Math.min(1,(gov-1)/.5):gov>.6?.1+.35*(gov-.6)/.4:gov*.1,
+gls=gb*P.gl/100*.35,occ=GFA/Us[1]*Us[2],warn=d.eq.on?1:.5,rate=st==2?.3:gov>1?.004+.01*(gov-1):gov>.6?1e-4:0,
+deaths=Math.round(occ*rate*warn+(st==2?(H/10+10)*warn:0)),injured=Math.round(deaths*3+(gb>.25?occ*gb*.0015:0)+(st==1?occ*.01:0)),
+prop=cost*(Math.min(1,dr+gls)+.3*Math.min(1,dr+gls*.5)+(st==2?.15:0)),
+w0=r.reduce((a,x)=>x[1]>a[1]?x:a,['',-1]),wn=w0[0];
+return{T,Pr,r,gov,n,cost,gfa:GFA,st,gb,occ,deaths,injured,prop,total:prop+deaths*1e7,worst:wn,mode:Pr>=1?'buckle':/Earth|Fire/.test(wn)?'pancake':'topple',hinge:/Earth/.test(wn)?.15:/Fire/.test(wn)?.45:Pr>=1?.5:.06,lam:2*H/(Y.rf*b)}}
+function mxH(P){let lo=5,hi=1600;if(!an(hi,P).st)return hi;if(an(lo,P).st)return 0;for(let i=0;i<28;i++){const m=(lo+hi)/2;an(m,P).st?hi=m:lo=m}return lo}
+let msgOn=0,pgb=0,TX=0,TZ=0;
+function upd(reset){
+if(reset){S.ph=0;S.run=0;$('#run').textContent='Run simulation';msgOn=0;$('#msg').className=''}
+const v=id=>+$('#'+id).value;
+Object.assign(S,{H:v('H'),B:v('B'),D:v('D'),fh:v('FH'),tp:v('TP')/100,gl:v('GL'),sf:v('SF'),s:v('sys'),fn:v('FN'),dp:v('DP'),gt:v('GT'),us:v('US')});
+res=an(S.H,S);mx=mxH(S);sc=6/Math.max(S.H,S.B*1.6,S.D*1.6,60);
+SL.forEach(x=>$('#'+x[0]+'v').textContent=v(x[0])+x[5]);
+document.querySelectorAll('#mat button').forEach((b,i)=>b.className=i==S.m?'on':'');
+for(const k in DZ)$('#'+k+'_t').textContent=DZ[k].t(S.dz[k].v);
+const r=res,b=Math.min(S.B,S.D),ar=S.H/b,cls=ar<3?'stocky':ar<5?'normal':ar<7?'slender':ar<10?'very slender':'extreme',
+vt=['Survives','Heavily damaged','Collapses'][r.st],vc=['--ok','--wn','--bd'][r.st],
+bars=r.r.length?r.r.map(x=>`<div class=kv><span>${x[0]}${x[2]>.05?' (glass '+Math.round(x[2]*100)+'%)':''}</span><b>${x[1].toFixed(2)}</b></div><div class=bar><i style='width:${Math.min(100,x[1]*66)}%;background:var(${x[1]<1?'--ok':x[1]<1.5?'--wn':'--bd'})'></i></div>`).join(''):'<small>No disaster applied. Switch one on at left.</small>';
+$('#hud').innerHTML=`<div class=vd style='color:var(${vc})'>${vt}</div><small>Governing demand/capacity ${r.gov.toFixed(2)}${r.Pr>=1?'. Self-weight buckling.':''}${r.gb>.05?' Glass broken: '+Math.round(r.gb*100)+'%.':''}</small>
+<h2>Estimated losses</h2>
+<div class=kv><span>Occupants present</span><b>${Math.round(r.occ).toLocaleString()}</b></div>
+<div class=kv><span>Deaths / injured</span><b>${r.deaths.toLocaleString()} / ${r.injured.toLocaleString()}</b></div>
+<div class=kv><span>Property + contents</span><b>${fmt2(r.prop)}</b></div>
+<div class=kv><span>Total, lives at $10M</span><b>${fmt2(r.total)}</b></div>
+<h2>Slenderness</h2>
+<div class=kv><span>H / narrow side</span><b>${ar.toFixed(1)} (${cls})</b></div>
+<div class=kv><span>Effective kL/r, k = 2</span><b>${r.lam.toFixed(0)}</b></div>
+<div class=kv><span>Fundamental period</span><b>${r.T.toFixed(1)} s</b></div>
+<div class=kv><span>Buckling P/Pcr</span><b>${r.Pr.toFixed(2)}</b></div>
+<div class=kv><span>Max safe height at this size</span><b>${mx>=1600?'over 1600 m':mx<6?'none':Math.round(mx)+' m (H/B '+(mx/b).toFixed(1)+')'}</b></div>
+<h2>Demand / capacity (1.0 = limit)</h2>${bars}
+<h2>Rough cost</h2>
+<div class=kv><span>Floors / floor area</span><b>${r.n|0} / ${Math.round(r.gfa).toLocaleString()} m²</b></div>
+<div class=kv><span>Build cost</span><b>${fmt2(r.cost)}</b></div>
+<div class=kv><span>Per m² of floor</span><b>$${Math.round(r.cost/r.gfa).toLocaleString()}</b></div>
+<p><small>Conceptual cantilever model for early sizing. Not for design: verify with a licensed structural engineer.</small></p>`}
+function msg(){
+const R=res,on=S.ph>(R.st==2?.5:.62)?1:0;if(on==msgOn)return;msgOn=on;const m=$('#msg');if(!on){m.className='';return}
+const gb=Math.round(R.gb*100),c=R.st==2?'--bd':R.st==1||gb>25?'--wn':'--ok',
+ti=R.st==2?'Structural failure: the building has collapsed':R.st==1?'Severe damage: still standing':gb>25?'Facade failure: '+gb+'% of the glass is broken':'The building survived',
+de=R.st==2?(R.Pr>=1?'Global buckling under its own weight.':R.worst+' overloaded the structure; '+(R.mode=='pancake'?'the floors pancaked.':'it overturned.')):R.st==1?'Cracking, spalling and permanent lean. Likely demolition.':gb>25?'Structure intact. Glazing, interiors and cladding need replacing.':'Only minor or no damage.';
+m.style.setProperty('--c','var('+c+')');
+m.innerHTML='<b>'+ti+'</b>'+de+'<br>Deaths ~'+R.deaths.toLocaleString()+', injured ~'+R.injured.toLocaleString()+'. Property loss '+fmt2(R.prop)+(R.deaths?', total with lives '+fmt2(R.total):'')+'.';
+m.className='on'}
+const PT=[],rnd=a=>(Math.random()-.5)*2*a,fx=document.createElement('canvas'),cx=fx.getContext('2d'),
+spr=c=>{const k=document.createElement('canvas');k.width=k.height=64;const q=k.getContext('2d'),g=q.createRadialGradient(32,32,0,32,32,32);g.addColorStop(0,'rgba('+c+',.7)');g.addColorStop(1,'rgba('+c+',0)');q.fillStyle=g;q.fillRect(0,0,64,64);return k},
+SP=[spr('150,138,125'),spr('28,28,32')];
+fx.id='fx';document.body.appendChild(fx);
+const fxr=()=>{fx.width=fx.clientWidth;fx.height=fx.clientHeight};addEventListener('resize',fxr);fxr();
+const add=(k,x,y,z,vx,vy,vz,s,L,c)=>{if(PT.length>900)PT.shift();const p={k,x,y,z,vx,vy,vz,s,l:0,L,c};PT.push(p);return p};
+function fxStep(dt,o){
+const{hs,bs,ds,sway,tp,pc,tor,hl,fe,gbk,dmg,q,ph,R}=o,mc='rgb('+MAT[S.m].col.map(x=>x*255|0).join(',')+')',run=ph>0&&ph<1,
+nn=r=>{r*=dt;return(r|0)+(Math.random()<r%1?1:0)},
+bp=(f,lx,lz)=>{const y0=f*hs*(1-pc),rx=lx-bs/2,c=Math.cos(tp),s=Math.sin(tp);return[bs/2+rx*c+y0*s+sway*f*f,-rx*s+y0*c,lz]},
+face=()=>Math.random()<.5?[(Math.random()<.5?-1:1)*bs/2,rnd(ds/2)]:[rnd(bs/2),(Math.random()<.5?-1:1)*ds/2];
+if(run&&dmg>.12&&R.st<2)for(let i=nn(50*dmg*o.e);i--;){const[lx,lz]=face(),[x,y,z]=bp(Math.min(.98,Math.max(.02,R.hinge+rnd(.25))),lx,lz);add(0,x,y,z,Math.sign(lx)*.3+rnd(.3),rnd(.3),rnd(.3),.025+Math.random()*.03,40,mc)}
+if(R.st==2&&run){const a=sm(.48,.6,ph)*(1-sm(.8,.95,ph));
+for(let i=nn(90*a);i--;){const[lx,lz]=face(),[x,y,z]=bp(Math.random(),lx,lz);add(0,x,y,z,rnd(1),Math.random()*.8,rnd(1),.03+Math.random()*.05,40,mc)}
+for(let i=nn(150*a);i--;){const[x,y,z]=bp(Math.random(),rnd(bs/2),rnd(ds/2));add(2,x,Math.max(.03,y*.3),z,rnd(.5),.2+Math.random()*.4,rnd(.5),.12+Math.random()*.15,3.5,0)}}
+if(gbk>pgb)for(let i=Math.min(40,(gbk-pgb)*600|0);i--;){const[lx,lz]=face(),[x,y,z]=bp(Math.random(),lx,lz);add(1,x,y,z,Math.sign(lx)*.4+rnd(.3),rnd(.3),rnd(.3),.014,3,0)}
+pgb=gbk;
+if(hl>.02){for(let i=nn(220*hl);i--;)add(4,rnd(6),hs*1.2+Math.random()*2,rnd(6),.9,-6-Math.random()*3,0,.025,1.6,0);
+if(R.gb>.2)for(let i=nn(20*hl);i--;){const[lx,lz]=face(),[x,y,z]=bp(.3+Math.random()*.7,lx,lz);add(1,x,y,z,Math.sign(lx)*.4,rnd(.2),rnd(.2),.014,3,0)}}
+if(fe>.05)for(let i=nn(14*fe);i--;){const[lx,lz]=face(),[x,y,z]=bp(.1+Math.random()*.5,lx,lz);add(3,x,y,z,.25+rnd(.1),.5+Math.random()*.4,rnd(.1),.1+Math.random()*.1,4.5,0)}
+if(q>.1)for(let i=nn(30*q);i--;)add(2,rnd(bs),.03,rnd(ds),rnd(.2),.1,rnd(.2),.07,2.2,0);
+if(tor>.1)for(let i=nn(40*tor);i--;){const TH=Math.max(hs*1.3,5),y=Math.random()*TH*.9,p=add(5,0,y,0,0,.4,0,.03+Math.random()*.03,2.5,'rgb(80,68,55)');p.a=Math.random()*6.28;p.r=(.07+.95*Math.pow(y/TH,1.4))*TH/5*(.6+.4*tor)*(.8+Math.random()*.6);p.w=3+Math.random()*3}}
+function fxDraw(dt,cam){
+const W=fx.width,Hh=fx.height;cx.clearRect(0,0,W,Hh);
+for(let i=PT.length-1;i>=0;i--){const p=PT[i];p.l+=dt;if(p.l>p.L){PT.splice(i,1);continue}
+if(p.k==5){p.a+=p.w*dt;p.x=TX+p.r*Math.cos(p.a);p.z=TZ+p.r*Math.sin(p.a);p.y+=p.vy*dt}
+else if(p.k==2||p.k==3){p.x+=p.vx*dt;p.y+=p.vy*dt;p.z+=p.vz*dt;p.s*=1+dt*.35;p.vx*=1-dt*.4}
+else{p.vy-=7*dt;p.x+=p.vx*dt;p.y+=p.vy*dt;p.z+=p.vz*dt;if(p.y<.02){p.y=.02;if(p.k==4||p.k==1)p.L=Math.min(p.L,p.l+.3);p.vy=Math.abs(p.vy)>.5?-p.vy*.3:0;p.vx*=.8;p.vz*=.8}}}
+for(let pass=0;pass<2;pass++)for(const p of PT){if((p.k==2||p.k==3)!=(pass==1))continue;
+const dx=p.x-cam.o[0],dy=p.y-cam.o[1],dz=p.z-cam.o[2],df=dx*cam.f[0]+dy*cam.f[1]+dz*cam.f[2];if(df<.3)continue;
+const sx=W/2+(dx*cam.r[0]+dy*cam.r[1]+dz*cam.r[2])/df*1.5*Hh,sy=Hh/2-(dx*cam.u[0]+dy*cam.u[1]+dz*cam.u[2])/df*1.5*Hh,s=Math.max(1.5,p.s*1.5*Hh/df);
+if(p.k==2||p.k==3){cx.globalAlpha=Math.min(.55,(1-p.l/p.L)*.6);cx.drawImage(SP[p.k-2],sx-s,sy-s,s*2,s*2)}
+else{cx.globalAlpha=1;cx.fillStyle=p.k==1?'rgba(190,225,255,.9)':p.k==4?'#fff':p.c;if(p.k==4){cx.beginPath();cx.arc(sx,sy,s*.6,0,6.3);cx.fill()}else cx.fillRect(sx-s/2,sy-s/2,s,s)}}
+cx.globalAlpha=1}
+function frame(ms){
+requestAnimationFrame(frame);if(!U.R)return;
+const t=ms/1e3,dt=Math.min(.05,t-last);last=t;
+if(S.run){S.ph=Math.min(1,S.ph+dt/18);if(S.ph>=1){S.run=0;$('#run').textContent='Run again'}}
+if(!drag)az+=dt*.03;
+const ph=S.ph,d=S.dz,R=res,Mt=MAT[S.m],e=ph>0?sm(0,.22,ph)*(1-sm(.82,1,ph)):.5,
+hs=S.H*sc,bs=S.B*sc,ds=S.D*sc,g=R.gov,act=Object.values(d).some(x=>x.on)?1:.15,Tv=Math.min(5,Math.max(1.5,R.T)),w=6.283*t/Tv;
+let sway=(.02+.07*Math.min(g,1.5))*hs*e*act*(Math.sin(w)+.4*Math.sin(2.3*w+1)),tp=0,pc=0;
+if(R.st)sway+=Math.min(.25,(g-1)*.25)*hs*sm(.3,.6,ph)*(R.st==1?1:.4);
+if(R.st==2&&ph>0){if(R.mode=='pancake'){pc=.72*Math.pow(sm(.45,.85,ph),1.3);sway*=1-sm(.5,.8,ph)*.7}else{sway*=1+2*sm(.3,.5,ph);tp=1.45*Math.pow(sm(.5,.85,ph),1.6);sway*=1-sm(.5,.6,ph)}}
+const q=d.eq.on?e*(.2+.8*d.eq.v):0,shx=.05*bs*q*(Math.sin(t*29)+.6*Math.sin(t*47+1)),shz=.05*bs*q*Math.cos(t*37),
+tor=d.tor.on?e*(.35+.65*d.tor.v):0,tx=ph>0?-9+9.5*sm(0,.55,ph)+9*sm(.6,1,ph):-4.5+Math.sin(t*.5),tz=-.5+.3*Math.sin(t*.7),
+hu=d.hur.on?e*(.4+.6*d.hur.v):0,hl=d.hail.on?e*(.3+.7*d.hail.v):0,ec=d.ecl.on?e*(.1+.9*d.ecl.v):0,
+rn=Math.max(d.rain.on?e*(.25+.75*d.rain.v):0,hu*.95,hl*.85),
+fe=d.fire.on?(ph>0?sm(0,.45,ph)*(1-.5*sm(.9,1,ph)):.6)*(.4+.6*d.fire.v):0,
+dmg=ph>0?Math.min(1,Math.max(0,(g-.5)/1.1))*sm(.2,.8,ph):0,gbk=ph>0?R.gb*sm(.15,.5,ph):0,
+kn=R.st==1?Math.min(.08,.02+(g-1)*.08)*hs*sm(.3,.6,ph):0,dist=Math.max(hs*1.7,Math.max(bs,ds)*2.6,4.5)*zoom;
+TX=tx;TZ=tz;
+gl.uniform2f(U.R,cv.width,cv.height);gl.uniform1f(U.T,t);
+gl.uniform4f(U.G,hs,bs,sway,tp);gl.uniform4f(U.W,rn,tor,ec,dmg);
+gl.uniform4f(U.C,az,el,dist,Math.min(120,Math.round(S.H/S.fh)));
+gl.uniform4f(U.P,Mt.rf,S.s,Math.min(14,Math.max(3,Math.round(Math.min(S.B,S.D)/7))),ds);
+gl.uniform4f(U.K,shx,shz,tx,tz);gl.uniform3f(U.M,...Mt.col);
+gl.uniform4f(U.Q,S.tp,pc,R.hinge*hs,kn);gl.uniform4f(U.Z,hl,gbk,S.gl/100,R.hinge);gl.uniform4f(U.F,fe,0,0,0);
+gl.drawArrays(gl.TRIANGLES,0,3);
+const ca=Math.cos(el),fv=[-Math.sin(az)*ca,-Math.sin(el),-Math.cos(az)*ca],rl=Math.hypot(fv[0],fv[2]),rv=[-fv[2]/rl,0,fv[0]/rl],
+uv=[rv[1]*fv[2]-rv[2]*fv[1],rv[2]*fv[0]-rv[0]*fv[2],rv[0]*fv[1]-rv[1]*fv[0]],ta=[shx*.7,hs*.4,shz*.7],o=[ta[0]-dist*fv[0],ta[1]-dist*fv[1],ta[2]-dist*fv[2]];
+fxStep(dt,{hs,bs,ds,sway,tp,pc,tor,hl,fe,gbk,dmg,q,ph,R,e});fxDraw(dt,{o,f:fv,r:rv,u:uv});msg()}
+upd();
+</script></body></html>
